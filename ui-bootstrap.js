@@ -82,88 +82,87 @@ angular.module('ui.bootstrap.transition', [])
   return $transition;
 }]);
 
-angular.module('ui.bootstrap.collapse',['ui.bootstrap.transition'])
+angular.module('ui.bootstrap.collapse', ['ui.bootstrap.transition'])
 
-// The collapsible directive indicates a block of html that will expand and collapse
-.directive('collapse', ['$transition', function($transition) {
-  // CSS transitions don't work with height: auto, so we have to manually change the height to a
-  // specific value and then once the animation completes, we can reset the height to auto.
-  // Unfortunately if you do this while the CSS transitions are specified (i.e. in the CSS class
-  // "collapse") then you trigger a change to height 0 in between.
-  // The fix is to remove the "collapse" CSS class while changing the height back to auto - phew!
-  var fixUpHeight = function(scope, element, height) {
-    // We remove the collapse CSS class to prevent a transition when we change to height: auto
-    element.removeClass('collapse');
-    element.css({ height: height });
-    // It appears that  reading offsetWidth makes the browser realise that we have changed the
-    // height already :-/
-    var x = element[0].offsetWidth;
-    element.addClass('collapse');
-  };
+  .directive('collapse', ['$transition', function ($transition, $timeout) {
 
-  return {
-    link: function(scope, element, attrs) {
+    return {
+      link: function (scope, element, attrs) {
 
-      var isCollapsed;
-      var initialAnimSkip = true;
+        var initialAnimSkip = true;
+        var currentTransition;
 
-      scope.$watch(attrs.collapse, function(value) {
-        if (value) {
-          collapse();
-        } else {
-          expand();
-        }
-      });
-      
-
-      var currentTransition;
-      var doTransition = function(change) {
-        if ( currentTransition ) {
-          currentTransition.cancel();
-        }
-        currentTransition = $transition(element,change);
-        currentTransition.then(
-          function() { currentTransition = undefined; },
-          function() { currentTransition = undefined; }
-        );
-        return currentTransition;
-      };
-
-      var expand = function() {
-        if (initialAnimSkip) {
-          initialAnimSkip = false;
-          if ( !isCollapsed ) {
-            fixUpHeight(scope, element, 'auto');
-            element.addClass('in');
+        function doTransition(change) {
+          var newTransition = $transition(element, change);
+          if (currentTransition) {
+            currentTransition.cancel();
           }
-        } else {
-          doTransition({ height : element[0].scrollHeight + 'px' })
-          .then(function() {
-            // This check ensures that we don't accidentally update the height if the user has closed
-            // the group while the animation was still running
-            if ( !isCollapsed ) {
-              fixUpHeight(scope, element, 'auto');
-              element.addClass('in');
+          currentTransition = newTransition;
+          newTransition.then(newTransitionDone, newTransitionDone);
+          return newTransition;
+
+          function newTransitionDone() {
+            // Make sure it's this transition, otherwise, leave it alone.
+            if (currentTransition === newTransition) {
+              currentTransition = undefined;
             }
-          });
+          }
         }
-        isCollapsed = false;
-      };
-      
-      var collapse = function() {
-        isCollapsed = true;
-        element.removeClass('in');
-        if (initialAnimSkip) {
-          initialAnimSkip = false;
-          fixUpHeight(scope, element, 0);
-        } else {
-          fixUpHeight(scope, element, element[0].scrollHeight + 'px');
-          doTransition({'height':'0'});
+
+        function expand() {
+          if (initialAnimSkip) {
+            initialAnimSkip = false;
+            expandDone();
+          } else {
+            element.removeClass('collapse').addClass('collapsing');
+            doTransition({ height: element[0].scrollHeight + 'px' }).then(expandDone);
+          }
         }
-      };
-    }
-  };
-}]);
+
+        function expandDone() {
+          element.removeClass('collapsing');
+          element.addClass('collapse in');
+          element.css({height: 'auto'});
+        }
+
+        function collapse() {
+          if (initialAnimSkip) {
+            initialAnimSkip = false;
+            collapseDone();
+            element.css({height: 0});
+          } else {
+            // CSS transitions don't work with height: auto, so we have to manually change the height to a specific value
+            element.css({ height: element[0].scrollHeight + 'px' });
+            //trigger reflow so a browser relaizes that height was updated from auto to a specific value
+            var x = element[0].offsetWidth;
+
+            element.removeClass('collapse in').addClass('collapsing');
+
+            doTransition({ height: 0 }).then(collapseDone);
+          }
+        }
+
+        function collapseDone() {
+          element.removeClass('collapsing');
+          element.addClass('collapse');
+        }
+
+        scope.$watch(attrs.collapse, function (shouldCollapse) {
+          if (shouldCollapse) {
+            collapse();
+          } else {
+            expand();
+          }
+        });
+
+      }
+    };
+  }]);
+
+//TODO:
+//- refactor to remove code duplication
+//- corner cases - what happens in animation is in progress?
+//- tests based on the DOM state / classes
 
 angular.module('ui.bootstrap.accordion', ['ui.bootstrap.collapse'])
 
@@ -1402,31 +1401,21 @@ angular.module('ui.bootstrap.modal', [])
 /**
  * A helper directive for the $modal service. It creates a backdrop element.
  */
-  .directive('modalBackdrop', ['$modalStack', '$timeout', function ($modalStack, $timeout) {
+  .directive('modalBackdrop', ['$timeout', function ($timeout) {
     return {
       restrict: 'EA',
       replace: true,
       templateUrl: 'template/modal/backdrop.html',
       link: function (scope, element, attrs) {
-
         //trigger CSS transitions
         $timeout(function () {
           scope.animate = true;
         });
-
-        scope.close = function (evt) {
-          var modal = $modalStack.getTop();
-          if (modal && modal.value.backdrop && modal.value.backdrop != 'static') {
-            evt.preventDefault();
-            evt.stopPropagation();
-            $modalStack.dismiss(modal.key, 'backdrop click');
-          }
-        };
       }
     };
   }])
 
-  .directive('modalWindow', ['$timeout', function ($timeout) {
+  .directive('modalWindow', ['$modalStack', '$timeout', function ($modalStack, $timeout) {
     return {
       restrict: 'EA',
       scope: {
@@ -1442,6 +1431,15 @@ angular.module('ui.bootstrap.modal', [])
         $timeout(function () {
           scope.animate = true;
         });
+
+        scope.close = function (evt) {
+          var modal = $modalStack.getTop();
+          if (modal && modal.value.backdrop && modal.value.backdrop != 'static' && (evt.target === evt.currentTarget)) {
+            evt.preventDefault();
+            evt.stopPropagation();
+            $modalStack.dismiss(modal.key, 'backdrop click');
+          }
+        };
       }
     };
   }])
@@ -1465,6 +1463,10 @@ angular.module('ui.bootstrap.modal', [])
         }
         return topBackdropIndex;
       }
+
+      $rootScope.$watch(openedWindows.length, function(noOfModals){
+        body.toggleClass('modal-open', openedWindows.length() > 0);
+      });
 
       $rootScope.$watch(backdropIndex, function(newBackdropIndex){
         backdropScope.index = newBackdropIndex;
@@ -1529,9 +1531,9 @@ angular.module('ui.bootstrap.modal', [])
       };
 
       $modalStack.close = function (modalInstance, result) {
-        var modal = openedWindows.get(modalInstance);
-        if (modal) {
-          modal.value.deferred.resolve(result);
+        var modalWindow = openedWindows.get(modalInstance).value;
+        if (modalWindow) {
+          modalWindow.deferred.resolve(result);
           removeModalWindow(modalInstance);
         }
       };
@@ -2021,72 +2023,18 @@ angular.module( 'ui.bootstrap.tooltip', [ 'ui.bootstrap.position', 'ui.bootstrap
           var hasRegisteredTriggers = false;
           var hasEnableExp = angular.isDefined(attrs[prefix+'Enable']);
 
-          // By default, the tooltip is not open.
-          // TODO add ability to start tooltip opened
-          scope.tt_isOpen = false;
-
-          function toggleTooltipBind () {
-            if ( ! scope.tt_isOpen ) {
-              showTooltipBind();
-            } else {
-              hideTooltipBind();
-            }
-          }
-          
-          // Show the tooltip with delay if specified, otherwise show it immediately
-          function showTooltipBind() {
-            if(hasEnableExp && !scope.$eval(attrs[prefix+'Enable'])) {
-              return;
-            }
-            if ( scope.tt_popupDelay ) {
-              popupTimeout = $timeout( show, scope.tt_popupDelay );
-            } else {
-              scope.$apply( show );
-            }
-          }
-
-          function hideTooltipBind () {
-            scope.$apply(function () {
-              hide();
-            });
-          }
-          
-          // Show the tooltip popup element.
-          function show() {
+          var positionTooltip = function (){
             var position,
-                ttWidth,
-                ttHeight,
-                ttPosition;
-
-            // Don't show empty tooltips.
-            if ( ! scope.tt_content ) {
-              return;
-            }
-
-            // If there is a pending remove transition, we must cancel it, lest the
-            // tooltip be mysteriously removed.
-            if ( transitionTimeout ) {
-              $timeout.cancel( transitionTimeout );
-            }
-            
-            // Set the initial positioning.
-            tooltip.css({ top: 0, left: 0, display: 'block' });
-            
-            // Now we add it to the DOM because need some info about it. But it's not 
-            // visible yet anyway.
-            if ( appendToBody ) {
-                $body.append( tooltip );
-            } else {
-              element.after( tooltip );
-            }
-
+              ttWidth,
+              ttHeight,
+              ttPosition;
             // Get the position of the directive element.
             position = appendToBody ? $position.offset( element ) : $position.position( element );
 
             // Get the height and width of the tooltip so we can center it.
             ttWidth = tooltip.prop( 'offsetWidth' );
             ttHeight = tooltip.prop( 'offsetHeight' );
-            
+
             // Calculate the tooltip's top and left coordinates to center it with
             // this directive.
             switch ( scope.tt_placement ) {
@@ -2121,9 +2069,74 @@ angular.module( 'ui.bootstrap.tooltip', [ 'ui.bootstrap.position', 'ui.bootstrap
 
             // Now set the calculated positioning.
             tooltip.css( ttPosition );
-              
+
+          };
+
+          // By default, the tooltip is not open.
+          // TODO add ability to start tooltip opened
+          scope.tt_isOpen = false;
+
+          function toggleTooltipBind () {
+            if ( ! scope.tt_isOpen ) {
+              showTooltipBind();
+            } else {
+              hideTooltipBind();
+            }
+          }
+          
+          // Show the tooltip with delay if specified, otherwise show it immediately
+          function showTooltipBind() {
+            if(hasEnableExp && !scope.$eval(attrs[prefix+'Enable'])) {
+              return;
+            }
+            if ( scope.tt_popupDelay ) {
+              popupTimeout = $timeout( show, scope.tt_popupDelay );
+              popupTimeout.then(function(reposition){reposition();});
+            } else {
+              scope.$apply( show )();
+            }
+          }
+
+          function hideTooltipBind () {
+            scope.$apply(function () {
+              hide();
+            });
+          }
+          
+          // Show the tooltip popup element.
+          function show() {
+
+
+            // Don't show empty tooltips.
+            if ( ! scope.tt_content ) {
+              return angular.noop;
+            }
+
+            // If there is a pending remove transition, we must cancel it, lest the
+            // tooltip be mysteriously removed.
+            if ( transitionTimeout ) {
+              $timeout.cancel( transitionTimeout );
+            }
+            
+            // Set the initial positioning.
+            tooltip.css({ top: 0, left: 0, display: 'block' });
+            
+            // Now we add it to the DOM because need some info about it. But it's not 
+            // visible yet anyway.
+            if ( appendToBody ) {
+                $body.append( tooltip );
+            } else {
+              element.after( tooltip );
+            }
+
+            positionTooltip();
+
             // And show the tooltip.
             scope.tt_isOpen = true;
+
+            // Return positioning function as promise callback for correct
+            // positioning after draw.
+            return positionTooltip;
           }
           
           // Hide the tooltip popup element.
@@ -2505,6 +2518,7 @@ angular.module('ui.bootstrap.tabs', [])
  * Tabset is the outer container for the tabs directive
  *
  * @param {boolean=} vertical Whether or not to use vertical styling for the tabs.
+ * @param {boolean=} justified Whether or not to use justified styling for the tabs.
  * @param {string=} direction  What direction the tabs should be rendered. Available:
  * 'right', 'left', 'below'.
  *
@@ -2512,13 +2526,17 @@ angular.module('ui.bootstrap.tabs', [])
 <example module="ui.bootstrap">
   <file name="index.html">
     <tabset>
-      <tab heading="Vertical Tab 1"><b>First</b> Content!</tab>
-      <tab heading="Vertical Tab 2"><i>Second</i> Content!</tab>
+      <tab heading="Tab 1"><b>First</b> Content!</tab>
+      <tab heading="Tab 2"><i>Second</i> Content!</tab>
     </tabset>
     <hr />
     <tabset vertical="true">
       <tab heading="Vertical Tab 1"><b>First</b> Vertical Content!</tab>
       <tab heading="Vertical Tab 2"><i>Second</i> Vertical Content!</tab>
+    </tabset>
+    <tabset justified="true">
+      <tab heading="Justified Tab 1"><b>First</b> Justified Content!</tab>
+      <tab heading="Justified Tab 2"><i>Second</i> Justified Content!</tab>
     </tabset>
   </file>
 </example>
@@ -2535,6 +2553,7 @@ angular.module('ui.bootstrap.tabs', [])
     compile: function(elm, attrs, transclude) {
       return function(scope, element, attrs, tabsetCtrl) {
         scope.vertical = angular.isDefined(attrs.vertical) ? scope.$parent.$eval(attrs.vertical) : false;
+        scope.justified = angular.isDefined(attrs.justified) ? scope.$parent.$eval(attrs.justified) : false;
         scope.type = angular.isDefined(attrs.type) ? scope.$parent.$eval(attrs.type) : 'tabs';
         scope.direction = angular.isDefined(attrs.direction) ? scope.$parent.$eval(attrs.direction) : 'top';
         scope.tabsAbove = (scope.direction != 'below');

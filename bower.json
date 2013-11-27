@@ -3,9 +3,10 @@
         "name": "https://github.com/angular-ui/bootstrap/graphs/contributors"
     },
     "name": "angular-bootstrap3",
-    "version": "0.7.0",
+    "version": "0.7.0-bootstrap3",
     "main": ["./ui-bootstrap-tpls.js"],
     "dependencies": {
         "angular": ">=1"
-    }    
+    },    
+    "homepage": "https://github.com/longaccess/angular-bootstrap3-bower"
 }
